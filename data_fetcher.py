@@ -31,6 +31,23 @@ def fetch_and_evaluate(ticker_symbol: str):
     short_float_pct = info.get("shortPercentOfFloat", 0.0) * 100
     days_to_cover = info.get("shortRatio", 2.0)
 
+    sector = info.get("sector", "Unknown")
+
+    pbr = info.get("priceToBook")
+    if not pbr or pbr <= 0:
+        pbr = current_price / bps if bps > 0 else 1.0
+
+    # 주봉 스토캐스틱 %K (14주 기준): 최근 14주 고가/저가 대비 현재 종가 위치
+    weekly = ticker.history(period="2y", interval="1wk")
+    stochastic_k = 50.0
+    if not weekly.empty:
+        recent = weekly.tail(14)
+        lowest_low = recent["Low"].min()
+        highest_high = recent["High"].max()
+        last_close = weekly["Close"].iloc[-1]
+        if highest_high > lowest_low:
+            stochastic_k = 100 * (last_close - lowest_low) / (highest_high - lowest_low)
+
     # 연간 현금소진율: 영업현금흐름이 음수(적자)면 그 절대값을, 흑자 기업이면
     # 모델의 gt=0 제약을 만족시키기 위한 최소값(1.0)을 사용해 러너웨이가
     # 사실상 매우 길게(=재무 안전) 계산되도록 한다.
@@ -53,6 +70,9 @@ def fetch_and_evaluate(ticker_symbol: str):
         short_float_pct=short_float_pct,
         days_to_cover=days_to_cover,
         dma_200=dma_200,
+        pbr=pbr,
+        sector=sector,
+        stochastic_k=stochastic_k,
     )
 
     # 3. 퀀트 평가 실행

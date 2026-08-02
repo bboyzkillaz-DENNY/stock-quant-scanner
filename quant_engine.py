@@ -32,6 +32,9 @@ class MarketDataInput(BaseModel):
     short_float_pct: float = Field(..., ge=0, le=100, description="공매도 잔고 비율 (%)")
     days_to_cover: float = Field(..., ge=0, description="Days to Cover (DTC)")
     dma_200: float = Field(..., gt=0, description="200일 이동평균선 ($)")
+    pbr: float = Field(..., gt=0, description="현재 PBR (주가/BPS)")
+    sector: str = Field(..., description="GICS 섹터 (섹터 평균 PBR 비교용)")
+    stochastic_k: float = Field(..., ge=0, le=100, description="주봉 스토캐스틱 %K (14주 기준)")
 
 
 class FactorScoreBreakdown(BaseModel):
@@ -62,6 +65,24 @@ class QuantAnalysisReport(BaseModel):
 # ==========================================
 # 2. Deterministic Quant Engine
 # ==========================================
+
+# 섹터 평균 PBR 참고치 (고정 근사값 — 실시간 섹터 지수 데이터가 아님).
+# yfinance의 GICS 섹터 분류와 매칭. 목록에 없는 섹터는 DEFAULT_SECTOR_PBR 사용.
+SECTOR_AVG_PBR = {
+    "Technology": 8.0,
+    "Healthcare": 5.0,
+    "Communication Services": 4.0,
+    "Consumer Cyclical": 5.0,
+    "Consumer Defensive": 4.5,
+    "Financial Services": 1.5,
+    "Energy": 1.8,
+    "Industrials": 4.0,
+    "Basic Materials": 2.5,
+    "Real Estate": 2.0,
+    "Utilities": 1.8,
+}
+DEFAULT_SECTOR_PBR = 3.0
+
 
 class QuantFactorEngine:
     """금융 수학 알고리즘 기반 정량 스코어링 엔진"""
@@ -94,25 +115,49 @@ class QuantFactorEngine:
         else:
             short_score = 5.0
 
-        # Factor 3: Technical Disparity (Max 25)
+        # Factor 3: Technical (Max 25) = 200일선 이격도(15) + 주봉 스토캐스틱(10)
         if disparity_200dma < -20.0:
-            tech_score = 25.0
+            disparity_score = 15.0
         elif disparity_200dma <= 0.0:
-            tech_score = 15.0
+            disparity_score = 9.0
         elif disparity_200dma <= 50.0:
-            tech_score = 5.0
+            disparity_score = 3.0
         else:
-            tech_score = 0.0
+            disparity_score = 0.0
 
-        # Factor 4: Balance Sheet Runway (Max 20)
-        if net_cash_m >= 1000 and runway_years >= 3.0:
-            bs_score = 20.0
-        elif net_cash_m >= 500 and runway_years >= 2.0:
-            bs_score = 12.0
-        elif net_cash_m > 0:
-            bs_score = 5.0
+        if data.stochastic_k < 20.0:
+            stochastic_score = 10.0
+        elif data.stochastic_k <= 50.0:
+            stochastic_score = 6.0
+        elif data.stochastic_k <= 80.0:
+            stochastic_score = 3.0
         else:
-            bs_score = 0.0
+            stochastic_score = 0.0
+
+        tech_score = disparity_score + stochastic_score
+
+        # Factor 4: Balance Sheet (Max 20) = 순현금/런웨이(12) + 섹터 대비 PBR(8)
+        if net_cash_m >= 1000 and runway_years >= 3.0:
+            cash_score = 12.0
+        elif net_cash_m >= 500 and runway_years >= 2.0:
+            cash_score = 7.0
+        elif net_cash_m > 0:
+            cash_score = 3.0
+        else:
+            cash_score = 0.0
+
+        sector_avg_pbr = SECTOR_AVG_PBR.get(data.sector, DEFAULT_SECTOR_PBR)
+        pbr_ratio = data.pbr / sector_avg_pbr
+        if pbr_ratio <= 0.7:
+            pbr_score = 8.0
+        elif pbr_ratio <= 1.0:
+            pbr_score = 5.0
+        elif pbr_ratio <= 1.3:
+            pbr_score = 2.0
+        else:
+            pbr_score = 0.0
+
+        bs_score = cash_score + pbr_score
 
         total_score = round(val_score + short_score + tech_score + bs_score, 2)
 
@@ -125,6 +170,9 @@ class QuantFactorEngine:
             summary = (
                 f"{data.ticker}는 FWD PSR {fwd_psr:.1f}배 수준으로 과열 구간을 벗어났으며, "
                 f"순현금 ${net_cash_m:.0f}M 및 {runway_years:.1f}년의 캐시 런웨이를 확보하여 재무 리스크가 낮습니다. "
+                f"PBR {data.pbr:.2f}배는 {data.sector} 섹터 평균({sector_avg_pbr:.1f}배) 대비 "
+                f"{'저평가' if pbr_ratio <= 1.0 else '고평가'} 구간이고, 주봉 스토캐스틱 %K {data.stochastic_k:.1f}는 "
+                f"{'바닥권' if data.stochastic_k < 20 else '중립~과열' if data.stochastic_k <= 80 else '과열권'}입니다. "
                 f"공매도 비율({data.short_float_pct:.2f}%) 하향 안정화로 하방 경직성이 확보되어 분할 매수를 추천합니다."
             )
         elif total_score >= 50.0 and fwd_psr <= 100.0:
@@ -132,13 +180,21 @@ class QuantFactorEngine:
             initial_entry = "0.0% (관망)"
             target_price = "N/A"
             stop_loss = f"${round(data.current_price * 0.85, 2)}"
-            summary = f"{data.ticker}는 밸류에이션 점수가 중간 수준(Total {total_score}점)으로 주요 지지선 형성 여부를 추가 관망해야 합니다."
+            summary = (
+                f"{data.ticker}는 밸류에이션 점수가 중간 수준(Total {total_score}점)으로 주요 지지선 형성 여부를 추가 관망해야 합니다. "
+                f"PBR {data.pbr:.2f}배({data.sector} 평균 {sector_avg_pbr:.1f}배 대비 {pbr_ratio:.2f}배율), "
+                f"주봉 스토캐스틱 %K {data.stochastic_k:.1f} 기준입니다."
+            )
         else:
             recommendation = RecommendationEnum.SCALE_OUT_SELL
             initial_entry = "0.0% (매도/비중 축소)"
             target_price = "N/A"
             stop_loss = "N/A"
-            summary = f"{data.ticker}는 PSR 과열 및 기술적 이격도 부담으로 리스크 관리 차원의 비중 축소가 필요합니다."
+            summary = (
+                f"{data.ticker}는 PSR 과열 및 기술적 이격도 부담으로 리스크 관리 차원의 비중 축소가 필요합니다. "
+                f"PBR {data.pbr:.2f}배({data.sector} 평균 대비 {pbr_ratio:.2f}배율), "
+                f"주봉 스토캐스틱 %K {data.stochastic_k:.1f}."
+            )
 
         scores = FactorScoreBreakdown(
             valuation_score=round(val_score, 2),
@@ -183,7 +239,10 @@ if __name__ == "__main__":
         bps=15.48,
         short_float_pct=12.7,
         days_to_cover=2.87,
-        dma_200=42.50
+        dma_200=42.50,
+        pbr=35.77 / 15.48,
+        sector="Technology",
+        stochastic_k=35.0,
     )
 
     # 파이프라인 실행

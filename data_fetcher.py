@@ -1,3 +1,4 @@
+import sys
 import time
 
 import yfinance as yf
@@ -73,6 +74,10 @@ def fetch_and_evaluate(ticker_symbol: str):
     history = ticker.history(period="1y")
 
     if not info.get("marketCap"):
+        print(
+            f"DEBUG {ticker_symbol}: info has {len(info)} keys: {list(info.keys())[:15]}",
+            file=sys.stderr,
+        )
         raise ValueError(f"Yahoo Finance에 '{ticker_symbol}'의 펀더멘털 데이터가 없습니다.")
 
     # 1. API 데이터 추출

@@ -3,7 +3,7 @@ from data_fetcher import fetch_and_evaluate
 
 WATCHLIST = [
     "IONQ", "RXRX", "INOD", "TWST", "MU", "MRVL", "RKLB", "GLW", "CRDO",
-    "OKLO", "SMR", "JOBY", "ACHR", "HOOD", "CCJ", "TEM", "CRWD", "PTIR",
+    "OKLO", "SMR", "JOBY", "ACHR", "HOOD", "CCJ", "TEM", "CRWD",
     "TSLA", "NVDA", "META", "AMZN",
 ]
 

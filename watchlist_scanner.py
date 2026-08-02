@@ -2,8 +2,9 @@ from quant_engine import RecommendationEnum
 from data_fetcher import fetch_and_evaluate
 
 WATCHLIST = [
-    "IONQ", "RXRX", "INOD", "TWST", "MU", "MRVL", "RKLB",
-    "GLW", "CRDO", "OKLO", "SMR", "JOBY", "ACHR", "PTIR", "TSLL",
+    "IONQ", "RXRX", "INOD", "TWST", "MU", "MRVL", "RKLB", "GLW", "CRDO",
+    "OKLO", "SMR", "JOBY", "ACHR", "HOOD", "CCJ", "TEM", "CRWD", "PTIR",
+    "TSLA", "NVDA", "META", "AMZN",
 ]
 
 

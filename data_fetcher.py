@@ -40,6 +40,20 @@ def get_sector_avg_pbr(sector: str) -> float:
     return avg_pbr
 
 
+def compute_rsi(close, period: int = 14) -> float:
+    """Wilder's smoothing 방식의 RSI (14일 기준)."""
+    delta = close.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = gain.ewm(alpha=1 / period, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1 / period, adjust=False).mean()
+    last_avg_loss = avg_loss.iloc[-1]
+    if last_avg_loss == 0:
+        return 100.0
+    rs = avg_gain.iloc[-1] / last_avg_loss
+    return 100 - (100 / (1 + rs))
+
+
 def fetch_and_evaluate(ticker_symbol: str):
     ticker = yf.Ticker(ticker_symbol)
     info = ticker.info
@@ -96,6 +110,8 @@ def fetch_and_evaluate(ticker_symbol: str):
     # 200일 이동평균선 계산
     dma_200 = history["Close"].rolling(window=200).mean().iloc[-1]
 
+    rsi = compute_rsi(history["Close"])
+
     # 2. Pydantic 모델로 변환
     input_data = MarketDataInput(
         ticker=ticker_symbol,
@@ -113,6 +129,7 @@ def fetch_and_evaluate(ticker_symbol: str):
         sector=sector,
         sector_avg_pbr=sector_avg_pbr,
         stochastic_k=stochastic_k,
+        rsi=rsi,
     )
 
     # 3. 퀀트 평가 실행

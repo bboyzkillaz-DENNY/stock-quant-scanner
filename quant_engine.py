@@ -36,6 +36,7 @@ class MarketDataInput(BaseModel):
     sector: str = Field(..., description="GICS 섹터 (표시용)")
     sector_avg_pbr: float = Field(..., gt=0, description="동종업계 peer 종목들의 실시간 평균 PBR")
     stochastic_k: float = Field(..., ge=0, le=100, description="주봉 스토캐스틱 %K (14주 기준)")
+    rsi: float = Field(..., ge=0, le=100, description="RSI (14일 기준)")
 
 
 class FactorScoreBreakdown(BaseModel):
@@ -101,26 +102,36 @@ class QuantFactorEngine:
         else:
             short_score = 5.0
 
-        # Factor 3: Technical (Max 25) = 200일선 이격도(15) + 주봉 스토캐스틱(10)
+        # Factor 3: Technical (Max 25) = 200일선 이격도(10) + 주봉 스토캐스틱(8) + RSI(7)
         if disparity_200dma < -20.0:
-            disparity_score = 15.0
+            disparity_score = 10.0
         elif disparity_200dma <= 0.0:
-            disparity_score = 9.0
+            disparity_score = 6.0
         elif disparity_200dma <= 50.0:
-            disparity_score = 3.0
+            disparity_score = 2.0
         else:
             disparity_score = 0.0
 
         if data.stochastic_k < 20.0:
-            stochastic_score = 10.0
+            stochastic_score = 8.0
         elif data.stochastic_k <= 50.0:
-            stochastic_score = 6.0
+            stochastic_score = 5.0
         elif data.stochastic_k <= 80.0:
-            stochastic_score = 3.0
+            stochastic_score = 2.0
         else:
             stochastic_score = 0.0
 
-        tech_score = disparity_score + stochastic_score
+        # RSI < 30 = 과매도(매수 우호), > 70 = 과열(매도 경계)
+        if data.rsi < 30.0:
+            rsi_score = 7.0
+        elif data.rsi <= 50.0:
+            rsi_score = 4.0
+        elif data.rsi <= 70.0:
+            rsi_score = 2.0
+        else:
+            rsi_score = 0.0
+
+        tech_score = disparity_score + stochastic_score + rsi_score
 
         # Factor 4: Balance Sheet (Max 20) = 순현금/런웨이(12) + 섹터 대비 PBR(8)
         if net_cash_m >= 1000 and runway_years >= 3.0:
@@ -158,7 +169,8 @@ class QuantFactorEngine:
                 f"순현금 ${net_cash_m:.0f}M 및 {runway_years:.1f}년의 캐시 런웨이를 확보하여 재무 리스크가 낮습니다. "
                 f"PBR {data.pbr:.2f}배는 {data.sector} 섹터 평균({sector_avg_pbr:.1f}배) 대비 "
                 f"{'저평가' if pbr_ratio <= 1.0 else '고평가'} 구간이고, 주봉 스토캐스틱 %K {data.stochastic_k:.1f}는 "
-                f"{'바닥권' if data.stochastic_k < 20 else '중립~과열' if data.stochastic_k <= 80 else '과열권'}입니다. "
+                f"{'바닥권' if data.stochastic_k < 20 else '중립~과열' if data.stochastic_k <= 80 else '과열권'}이며, "
+                f"RSI {data.rsi:.1f}는 {'과매도' if data.rsi < 30 else '중립' if data.rsi <= 70 else '과열'} 구간입니다. "
                 f"공매도 비율({data.short_float_pct:.2f}%) 하향 안정화로 하방 경직성이 확보되어 분할 매수를 추천합니다."
             )
         elif total_score >= 50.0 and fwd_psr <= 100.0:
@@ -169,7 +181,7 @@ class QuantFactorEngine:
             summary = (
                 f"{data.ticker}는 밸류에이션 점수가 중간 수준(Total {total_score}점)으로 주요 지지선 형성 여부를 추가 관망해야 합니다. "
                 f"PBR {data.pbr:.2f}배({data.sector} 평균 {sector_avg_pbr:.1f}배 대비 {pbr_ratio:.2f}배율), "
-                f"주봉 스토캐스틱 %K {data.stochastic_k:.1f} 기준입니다."
+                f"주봉 스토캐스틱 %K {data.stochastic_k:.1f}, RSI {data.rsi:.1f} 기준입니다."
             )
         else:
             recommendation = RecommendationEnum.SCALE_OUT_SELL
@@ -179,7 +191,7 @@ class QuantFactorEngine:
             summary = (
                 f"{data.ticker}는 PSR 과열 및 기술적 이격도 부담으로 리스크 관리 차원의 비중 축소가 필요합니다. "
                 f"PBR {data.pbr:.2f}배({data.sector} 평균 대비 {pbr_ratio:.2f}배율), "
-                f"주봉 스토캐스틱 %K {data.stochastic_k:.1f}."
+                f"주봉 스토캐스틱 %K {data.stochastic_k:.1f}, RSI {data.rsi:.1f}."
             )
 
         scores = FactorScoreBreakdown(
@@ -230,6 +242,7 @@ if __name__ == "__main__":
         sector="Technology",
         sector_avg_pbr=8.0,
         stochastic_k=35.0,
+        rsi=42.0,
     )
 
     # 파이프라인 실행

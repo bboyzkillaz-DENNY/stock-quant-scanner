@@ -1,3 +1,5 @@
+import time
+
 import yfinance as yf
 from quant_engine import MarketDataInput, QuantFactorEngine
 
@@ -57,6 +59,17 @@ def compute_rsi(close, period: int = 14) -> float:
 def fetch_and_evaluate(ticker_symbol: str):
     ticker = yf.Ticker(ticker_symbol)
     info = ticker.info
+
+    # Yahoo Finance가 공유 IP(예: GitHub Actions 러너)에서 간헐적으로 빈 응답을
+    # 주는 경우가 있어, marketCap이 비어 있으면 짧게 재시도한다.
+    retries = 2
+    for attempt in range(retries):
+        if info.get("marketCap"):
+            break
+        time.sleep(3)
+        ticker = yf.Ticker(ticker_symbol)
+        info = ticker.info
+
     history = ticker.history(period="1y")
 
     if not info.get("marketCap"):

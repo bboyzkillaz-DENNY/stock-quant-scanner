@@ -33,7 +33,8 @@ class MarketDataInput(BaseModel):
     days_to_cover: float = Field(..., ge=0, description="Days to Cover (DTC)")
     dma_200: float = Field(..., gt=0, description="200일 이동평균선 ($)")
     pbr: float = Field(..., gt=0, description="현재 PBR (주가/BPS)")
-    sector: str = Field(..., description="GICS 섹터 (섹터 평균 PBR 비교용)")
+    sector: str = Field(..., description="GICS 섹터 (표시용)")
+    sector_avg_pbr: float = Field(..., gt=0, description="동종업계 peer 종목들의 실시간 평균 PBR")
     stochastic_k: float = Field(..., ge=0, le=100, description="주봉 스토캐스틱 %K (14주 기준)")
 
 
@@ -65,23 +66,8 @@ class QuantAnalysisReport(BaseModel):
 # ==========================================
 # 2. Deterministic Quant Engine
 # ==========================================
-
-# 섹터 평균 PBR 참고치 (고정 근사값 — 실시간 섹터 지수 데이터가 아님).
-# yfinance의 GICS 섹터 분류와 매칭. 목록에 없는 섹터는 DEFAULT_SECTOR_PBR 사용.
-SECTOR_AVG_PBR = {
-    "Technology": 8.0,
-    "Healthcare": 5.0,
-    "Communication Services": 4.0,
-    "Consumer Cyclical": 5.0,
-    "Consumer Defensive": 4.5,
-    "Financial Services": 1.5,
-    "Energy": 1.8,
-    "Industrials": 4.0,
-    "Basic Materials": 2.5,
-    "Real Estate": 2.0,
-    "Utilities": 1.8,
-}
-DEFAULT_SECTOR_PBR = 3.0
+# 섹터 평균 PBR(data.sector_avg_pbr)은 실시간 peer 조회로 계산되어 입력되며,
+# 이 엔진 자체는 순수 계산만 수행한다 (네트워크 호출 없음 — data_fetcher.py 담당).
 
 
 class QuantFactorEngine:
@@ -146,7 +132,7 @@ class QuantFactorEngine:
         else:
             cash_score = 0.0
 
-        sector_avg_pbr = SECTOR_AVG_PBR.get(data.sector, DEFAULT_SECTOR_PBR)
+        sector_avg_pbr = data.sector_avg_pbr
         pbr_ratio = data.pbr / sector_avg_pbr
         if pbr_ratio <= 0.7:
             pbr_score = 8.0
@@ -242,6 +228,7 @@ if __name__ == "__main__":
         dma_200=42.50,
         pbr=35.77 / 15.48,
         sector="Technology",
+        sector_avg_pbr=8.0,
         stochastic_k=35.0,
     )
 

@@ -1,6 +1,44 @@
 import yfinance as yf
 from quant_engine import MarketDataInput, QuantFactorEngine
 
+# 섹터별 대표 peer 종목 (실시간 평균 PBR 계산용). GICS 섹터 분류 기준.
+SECTOR_PEER_TICKERS = {
+    "Technology": ["MSFT", "AAPL", "NVDA", "ORCL", "CSCO"],
+    "Healthcare": ["JNJ", "UNH", "PFE", "ABBV", "MRK"],
+    "Communication Services": ["GOOGL", "META", "VZ", "T", "DIS"],
+    "Consumer Cyclical": ["AMZN", "HD", "MCD", "NKE", "TJX"],
+    "Consumer Defensive": ["PG", "KO", "PEP", "WMT", "COST"],
+    "Financial Services": ["JPM", "BAC", "WFC", "GS", "MS"],
+    "Energy": ["XOM", "CVX", "COP", "SLB", "EOG"],
+    "Industrials": ["HON", "UNP", "CAT", "GE", "RTX"],
+    "Basic Materials": ["LIN", "APD", "ECL", "NEM", "FCX"],
+    "Real Estate": ["PLD", "AMT", "EQIX", "PSA", "O"],
+    "Utilities": ["NEE", "DUK", "SO", "D", "AEP"],
+}
+DEFAULT_SECTOR_PBR = 3.0  # peer 조회가 아예 실패할 때만 쓰는 최종 폴백
+
+_sector_pbr_cache: dict[str, float] = {}
+
+
+def get_sector_avg_pbr(sector: str) -> float:
+    """섹터 내 대표 peer 종목들의 실시간 PBR 평균. 같은 실행 내에서는 섹터별로 한 번만 조회(캐시)."""
+    if sector in _sector_pbr_cache:
+        return _sector_pbr_cache[sector]
+
+    peers = SECTOR_PEER_TICKERS.get(sector, [])
+    pbrs = []
+    for peer in peers:
+        try:
+            peer_pbr = yf.Ticker(peer).info.get("priceToBook")
+            if peer_pbr and peer_pbr > 0:
+                pbrs.append(peer_pbr)
+        except Exception:
+            continue
+
+    avg_pbr = sum(pbrs) / len(pbrs) if pbrs else DEFAULT_SECTOR_PBR
+    _sector_pbr_cache[sector] = avg_pbr
+    return avg_pbr
+
 
 def fetch_and_evaluate(ticker_symbol: str):
     ticker = yf.Ticker(ticker_symbol)
@@ -32,6 +70,7 @@ def fetch_and_evaluate(ticker_symbol: str):
     days_to_cover = info.get("shortRatio", 2.0)
 
     sector = info.get("sector", "Unknown")
+    sector_avg_pbr = get_sector_avg_pbr(sector)
 
     pbr = info.get("priceToBook")
     if not pbr or pbr <= 0:
@@ -72,6 +111,7 @@ def fetch_and_evaluate(ticker_symbol: str):
         dma_200=dma_200,
         pbr=pbr,
         sector=sector,
+        sector_avg_pbr=sector_avg_pbr,
         stochastic_k=stochastic_k,
     )
 

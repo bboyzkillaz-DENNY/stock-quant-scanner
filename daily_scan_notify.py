@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 
 import requests
 
@@ -48,8 +49,11 @@ def main() -> None:
         try:
             report = fetch_and_evaluate(ticker)
         except Exception as e:
+            print(f"{ticker} 조회 실패: {e}", file=sys.stderr)
             errors.append(f"{ticker}: {e}")
             continue
+        finally:
+            time.sleep(1)  # Yahoo Finance 레이트리밋 완화
 
         if report.recommendation in (RecommendationEnum.SCALE_IN_BUY, RecommendationEnum.SCALE_OUT_SELL):
             send_telegram(token, chat_id, format_telegram_alert(report))

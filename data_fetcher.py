@@ -1,8 +1,31 @@
+import os
 import sys
 import time
 
+import requests
 import yfinance as yf
 from quant_engine import MarketDataInput, QuantFactorEngine
+
+FMP_API_KEY = os.environ.get("FMP_API_KEY", "")
+
+
+def _fmp_fallback_profile(ticker_symbol: str) -> dict:
+    """yfinance의 marketCap이 비어 있을 때 FMP profile 엔드포인트로 보완 조회.
+    이 플랜에서는 balance-sheet/key-metrics 등은 막혀 있어 marketCap/price/sector만 보완한다."""
+    if not FMP_API_KEY:
+        return {}
+    try:
+        resp = requests.get(
+            "https://financialmodelingprep.com/stable/profile",
+            params={"symbol": ticker_symbol, "apikey": FMP_API_KEY},
+            timeout=10,
+        )
+        data = resp.json()
+        if isinstance(data, list) and data:
+            return data[0]
+    except Exception:
+        pass
+    return {}
 
 # 섹터별 대표 peer 종목 (실시간 평균 PBR 계산용). GICS 섹터 분류 기준.
 SECTOR_PEER_TICKERS = {
@@ -74,11 +97,23 @@ def fetch_and_evaluate(ticker_symbol: str):
     history = ticker.history(period="1y")
 
     if not info.get("marketCap"):
-        print(
-            f"DEBUG {ticker_symbol}: info has {len(info)} keys: {list(info.keys())[:15]}",
-            file=sys.stderr,
-        )
-        raise ValueError(f"Yahoo Finance에 '{ticker_symbol}'의 펀더멘털 데이터가 없습니다.")
+        fmp_data = _fmp_fallback_profile(ticker_symbol)
+        if fmp_data.get("marketCap"):
+            print(f"{ticker_symbol}: yfinance 실패, FMP 폴백으로 marketCap/price/sector 보완", file=sys.stderr)
+            info = dict(info)
+            info["marketCap"] = fmp_data["marketCap"]
+            info.setdefault("currentPrice", fmp_data.get("price"))
+            if not info.get("sector"):
+                info["sector"] = fmp_data.get("sector", "Unknown")
+
+    if history.empty:
+        time.sleep(3)
+        history = ticker.history(period="1y")
+
+    if not info.get("marketCap"):
+        raise ValueError(f"Yahoo Finance에 '{ticker_symbol}'의 펀더멘털 데이터가 없습니다 (FMP 폴백도 실패).")
+    if history.empty:
+        raise ValueError(f"'{ticker_symbol}'의 가격 히스토리를 가져올 수 없습니다.")
 
     # 1. API 데이터 추출
     current_price = info.get("currentPrice", history["Close"].iloc[-1])

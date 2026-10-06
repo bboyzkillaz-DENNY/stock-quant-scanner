@@ -29,15 +29,36 @@ def format_telegram_alert(report) -> str:
     )
 
 
-def send_telegram(token: str, chat_id: str, text: str) -> None:
+TELEGRAM_TIMEOUT = 15
+TELEGRAM_MAX_ATTEMPTS = 4  # 최초 1회 + 재시도 3회 (대기 2s, 4s, 8s)
+
+
+def send_telegram(token: str, chat_id: str, text: str) -> bool:
+    """타임아웃·연결 오류·429·5xx는 지수 백오프로 재시도. 성공 여부를 반환."""
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-    resp = requests.post(
-        url,
-        json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"},
-        timeout=10,
-    )
-    if resp.status_code != 200:
-        print(f"텔레그램 전송 실패: {resp.status_code} {resp.text}", file=sys.stderr)
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+
+    for attempt in range(1, TELEGRAM_MAX_ATTEMPTS + 1):
+        delay = 2 ** attempt
+        try:
+            resp = requests.post(url, json=payload, timeout=TELEGRAM_TIMEOUT)
+        except (requests.Timeout, requests.ConnectionError) as e:
+            print(f"텔레그램 통신 에러 ({attempt}/{TELEGRAM_MAX_ATTEMPTS}): {e}", file=sys.stderr)
+        else:
+            if resp.status_code == 200:
+                return True
+            print(f"텔레그램 전송 실패 ({attempt}/{TELEGRAM_MAX_ATTEMPTS}): {resp.status_code} {resp.text}", file=sys.stderr)
+            if resp.status_code == 429:
+                try:
+                    delay = max(delay, int(resp.json()["parameters"]["retry_after"]))
+                except (ValueError, KeyError, TypeError):
+                    pass
+            elif resp.status_code < 500:
+                return False  # 400/401/403 등은 재시도해도 같은 결과
+
+        if attempt < TELEGRAM_MAX_ATTEMPTS:
+            time.sleep(delay)
+    return False
 
 
 def main() -> None:

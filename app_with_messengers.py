@@ -1,3 +1,4 @@
+import asyncio
 import os
 import json
 import logging
@@ -27,15 +28,25 @@ class TelegramNotifier:
             return
 
         payload = {"chat_id": self.chat_id, "text": message, "parse_mode": "Markdown"}
+        max_attempts = 4  # 최초 1회 + 재시도 3회 (대기 2s, 4s, 8s)
         async with httpx.AsyncClient() as client:
-            try:
-                res = await client.post(self.api_url, json=payload, timeout=5.0)
-                if res.status_code == 200:
-                    logger.info("텔레그램 알림 전송 성공")
-                else:
-                    logger.error(f"텔레그램 전송 실패: {res.text}")
-            except Exception as e:
-                logger.error(f"텔레그램 통신 에러: {e}")
+            for attempt in range(1, max_attempts + 1):
+                retryable = True
+                try:
+                    res = await client.post(self.api_url, json=payload, timeout=15.0)
+                    if res.status_code == 200:
+                        logger.info("텔레그램 알림 전송 성공")
+                        return
+                    logger.error(f"텔레그램 전송 실패 ({attempt}/{max_attempts}): {res.text}")
+                    retryable = res.status_code == 429 or res.status_code >= 500
+                except (httpx.TimeoutException, httpx.TransportError) as e:
+                    logger.error(f"텔레그램 통신 에러 ({attempt}/{max_attempts}): {e!r}")
+                except Exception as e:
+                    logger.error(f"텔레그램 통신 에러: {e!r}")
+                    return
+                if not retryable or attempt == max_attempts:
+                    return
+                await asyncio.sleep(2 ** attempt)
 
 
 class KakaoNotifier:

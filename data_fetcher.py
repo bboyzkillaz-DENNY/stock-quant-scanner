@@ -109,6 +109,7 @@ def fetch_and_evaluate(ticker_symbol: str):
     if history.empty:
         time.sleep(3)
         history = ticker.history(period="1y")
+    history = history.dropna(subset=["Close"])  # 당일 미완성 봉(NaN) 제거
 
     if not info.get("marketCap"):
         raise ValueError(f"Yahoo Finance에 '{ticker_symbol}'의 펀더멘털 데이터가 없습니다 (FMP 폴백도 실패).")
@@ -161,7 +162,12 @@ def fetch_and_evaluate(ticker_symbol: str):
     annual_burn_rate_m = abs(operating_cashflow) / 1e6 if operating_cashflow < 0 else 1.0
 
     # 200일 이동평균선 계산
-    dma_200 = history["Close"].rolling(window=200).mean().iloc[-1]
+    # 상장 200거래일 미만 신규 종목은 보유한 이력 전체의 평균으로 대체(최소 20거래일 필요).
+    if len(history) < 20:
+        raise ValueError(f"'{ticker_symbol}'의 가격 이력이 {len(history)}거래일뿐이라 평가할 수 없습니다 (최소 20거래일).")
+    if len(history) < 200:
+        print(f"{ticker_symbol}: 이력 {len(history)}거래일 < 200 → 200일선 대신 가용 기간 평균 사용", file=sys.stderr)
+    dma_200 = history["Close"].rolling(window=200, min_periods=20).mean().iloc[-1]
 
     rsi = compute_rsi(history["Close"])
 

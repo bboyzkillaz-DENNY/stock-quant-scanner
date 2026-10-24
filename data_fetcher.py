@@ -109,6 +109,7 @@ def fetch_and_evaluate(ticker_symbol: str):
     if history.empty:
         time.sleep(3)
         history = ticker.history(period="1y")
+    history = history.dropna(subset=["Close"])  # 당일 미완성 봉(NaN) 제거
 
     if not info.get("marketCap"):
         raise ValueError(f"Yahoo Finance에 '{ticker_symbol}'의 펀더멘털 데이터가 없습니다 (FMP 폴백도 실패).")

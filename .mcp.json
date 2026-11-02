@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "korean-tax-calc": {
+      "command": "uvx",
+      "args": ["korean-tax-calc-mcp"]
+    }
+  }
+}

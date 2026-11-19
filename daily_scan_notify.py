@@ -78,22 +78,34 @@ def main() -> None:
     token = os.environ["TELEGRAM_BOT_TOKEN"]
     chat_id = os.environ["TELEGRAM_CHAT_ID"]
 
-    errors = []
-    for ticker in WATCHLIST:
-        try:
-            report = fetch_and_evaluate(ticker)
-        except Exception as e:
-            print(f"{ticker} 조회 실패: {e}", file=sys.stderr)
-            errors.append(f"{ticker}: {e}")
-            continue
-        finally:
-            time.sleep(1)  # Yahoo Finance 레이트리밋 완화
+    def run_pass(tickers):
+        """tickers를 평가하고 (실패 목록 {티커: 에러문구})을 돌려준다. 신호가 나오면 즉시 전송."""
+        failed = {}
+        for ticker in tickers:
+            try:
+                report = fetch_and_evaluate(ticker)
+            except Exception as e:
+                print(f"{ticker} 조회 실패: {e}", file=sys.stderr)
+                failed[ticker] = str(e)
+                continue
+            finally:
+                time.sleep(1)  # Yahoo Finance 레이트리밋 완화
 
-        if report.recommendation in (RecommendationEnum.SCALE_IN_BUY, RecommendationEnum.SCALE_OUT_SELL):
-            send_telegram(token, chat_id, format_telegram_alert(report))
+            if report.recommendation in (RecommendationEnum.SCALE_IN_BUY, RecommendationEnum.SCALE_OUT_SELL):
+                send_telegram(token, chat_id, format_telegram_alert(report))
+        return failed
 
-    if errors:
-        send_telegram(token, chat_id, format_error_summary(errors))
+    failed = run_pass(WATCHLIST)
+
+    # 실행 초반 Yahoo 부분 응답 등 일시 오류는 잠시 뒤 재시도하면 대부분 해결된다.
+    # 실패 종목만 한 번 더 시도하고, 그래도 실패한 것만 오류 알림으로 보낸다.
+    if failed:
+        print(f"실패 {len(failed)}종목 재시도: {', '.join(failed)}", file=sys.stderr)
+        time.sleep(20)
+        failed = run_pass(list(failed))
+
+    if failed:
+        send_telegram(token, chat_id, format_error_summary([f"{t}: {msg}" for t, msg in failed.items()]))
 
 
 if __name__ == "__main__":

@@ -66,6 +66,36 @@ def get_sector_avg_pbr(sector: str) -> float:
     return avg_pbr
 
 
+def _info_complete(info: dict) -> bool:
+    """재시도 없이 평가를 진행해도 되는 응답인지(시가총액·매출이 모두 있는지) 판단."""
+    return bool(info.get("marketCap")) and bool(info.get("totalRevenue"))
+
+
+def _get_fwd_revenue_m(ticker, info: dict, symbol: str):
+    """forward 매출($M)을 우선순위대로 구한다. 모두 실패하면 None (0.0을 돌려주지 않는다).
+    1) 애널리스트 컨센서스(현재 회계연도 평균)  2) TTM 매출(info)  3) 최근 연간 매출(income_stmt)"""
+    try:
+        est = ticker.revenue_estimate.loc["0y", "avg"]
+        if est and est > 0:
+            return est / 1e6
+    except Exception:
+        pass
+
+    ttm = info.get("totalRevenue")
+    if ttm and ttm > 0:
+        return ttm / 1e6
+
+    try:
+        annual = ticker.income_stmt.loc["Total Revenue"].dropna().iloc[0]
+        if annual and annual > 0:
+            print(f"{symbol}: 컨센서스·TTM 매출 없음 → 최근 연간 매출로 대체", file=sys.stderr)
+            return float(annual) / 1e6
+    except Exception:
+        pass
+
+    return None
+
+
 def compute_rsi(close, period: int = 14) -> float:
     """Wilder's smoothing 방식의 RSI (14일 기준)."""
     delta = close.diff()
@@ -86,9 +116,11 @@ def fetch_and_evaluate(ticker_symbol: str):
 
     # Yahoo Finance가 공유 IP(예: GitHub Actions 러너)에서 간헐적으로 빈 응답을
     # 주는 경우가 있어, marketCap이 비어 있으면 짧게 재시도한다.
+    # marketCap뿐 아니라 totalRevenue도 확인한다: 실행 초반에 Yahoo가 일부 필드만 채운
+    # 부분 응답을 주면 매출이 0으로 처리되어 검증 오류가 났던 문제를 막기 위함.
     retries = 2
     for attempt in range(retries):
-        if info.get("marketCap"):
+        if _info_complete(info):
             break
         time.sleep(3)
         ticker = yf.Ticker(ticker_symbol)
@@ -120,16 +152,12 @@ def fetch_and_evaluate(ticker_symbol: str):
     current_price = info.get("currentPrice", history["Close"].iloc[-1])
     market_cap_m = info.get("marketCap", 0) / 1e6
 
-    # 애널리스트 컨센서스 forward 매출 추정치: yfinance의 revenue_estimate에서
-    # 현재 회계연도("0y") 평균 추정치를 사용. 커버리지가 없는 종목이면 TTM 매출로 대체.
-    try:
-        fwd_revenue = ticker.revenue_estimate.loc["0y", "avg"]
-    except (KeyError, AttributeError):
-        fwd_revenue = None
-    if fwd_revenue and fwd_revenue > 0:
-        fwd_revenue_m = fwd_revenue / 1e6
-    else:
-        fwd_revenue_m = info.get("totalRevenue", 0) / 1e6
+    fwd_revenue_m = _get_fwd_revenue_m(ticker, info, ticker_symbol)
+    if fwd_revenue_m is None:
+        raise ValueError(
+            f"'{ticker_symbol}'의 매출 데이터(컨센서스/TTM/연간)를 모두 가져오지 못했습니다 "
+            f"(Yahoo 부분 응답 의심, 재시도 필요)."
+        )
 
     total_cash_m = info.get("totalCash", 0) / 1e6
     total_debt_m = info.get("totalDebt", 0) / 1e6
